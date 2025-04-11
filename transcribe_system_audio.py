@@ -4,6 +4,8 @@ import numpy as np
 import soundcard as sc
 import torch
 import warnings
+from datetime import datetime
+from pathlib import Path
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from dotenv import load_dotenv
 
@@ -83,6 +85,13 @@ def process_audio(audio_data, processor, model, device):
         logger.error(f"Error processing audio: {e}")
         return ""
 
+def get_output_file():
+    """Create a timestamped output file in the output directory."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+    return output_dir / f"transcript_{timestamp}.txt"
+
 def main():
     """Main execution function."""
     try:
@@ -95,11 +104,16 @@ def main():
         processor, model, device, _ = load_model()
         loopback_device = get_loopback_device()
         
+        # Create output file
+        output_file = get_output_file()
+        logger.info(f"Saving transcriptions to: {output_file}")
+        
         logger.info(f"Recording from: {loopback_device.name}")
         logger.info("Started listening... (Press Ctrl+C to stop)")
         
         # Start recording loop
-        with loopback_device.recorder(samplerate=16000) as mic:
+        with loopback_device.recorder(samplerate=16000) as mic, \
+             open(output_file, 'a', encoding='utf-8') as f:
             while True:
                 # Record audio chunk
                 audio_data = mic.record(int(16000 * chunk_duration))
@@ -112,7 +126,11 @@ def main():
                 if np.sqrt(np.mean(audio_data**2)) > silence_threshold:
                     transcription = process_audio(audio_data, processor, model, device)
                     if transcription:
+                        timestamp = datetime.now().strftime("%H:%M:%S")
+                        output_line = f"[{timestamp}] {transcription}\n"
                         print(f"🎤 {transcription}")
+                        f.write(output_line)
+                        f.flush()  # Ensure immediate write to file
     
     except KeyboardInterrupt:
         logger.info("\nStopping transcription...")
