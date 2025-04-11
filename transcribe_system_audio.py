@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from dotenv import load_dotenv
+from collections import deque
 
 from utils.device import get_optimal_device
 from utils.logger_config import setup_logger
@@ -17,6 +18,12 @@ warnings.filterwarnings("ignore", message="data discontinuity in recording")
 
 # Initialize logging
 logger = setup_logger()
+
+# Constants for audio processing
+SAMPLE_RATE = 16000
+MIN_AUDIO_LENGTH = 30  # Minimum seconds of audio needed for Whisper
+OVERLAP_DURATION = 0.5  # 500ms overlap between chunks
+AUDIO_BUFFER_DURATION = max(MIN_AUDIO_LENGTH, 30.0)  # Keep enough audio history for minimum length
 
 def load_model():
     """Load and prepare the Whisper model."""
@@ -64,35 +71,29 @@ def process_audio(audio_data, processor, model, device):
         if audio_data.dtype != np.float32:
             audio_data = audio_data.astype(np.float32)
         
-        # Calculate target length (30 seconds at 16kHz = 480000 samples)
-        target_length = 480000
-        current_length = len(audio_data)
-        
-        if current_length < target_length:
-            # Pad with zeros if audio is shorter than 30 seconds
-            padding = np.zeros(target_length - current_length, dtype=np.float32)
+        # Ensure minimum length requirement
+        min_samples = SAMPLE_RATE * MIN_AUDIO_LENGTH
+        if len(audio_data) < min_samples:
+            # Pad with silence if needed
+            padding = np.zeros(min_samples - len(audio_data), dtype=np.float32)
             audio_data = np.concatenate([audio_data, padding])
-        elif current_length > target_length:
-            # Trim if audio is longer than 30 seconds
-            audio_data = audio_data[:target_length]
         
-        # Prepare audio features with attention mask
+        # Prepare audio features
         inputs = processor(
             audio_data, 
-            sampling_rate=16000, 
+            sampling_rate=SAMPLE_RATE, 
             return_tensors="pt",
             padding=True
         )
         input_features = inputs.input_features.to(device)
         
-        # Create attention mask (all 1s since we're processing a single chunk)
-        attention_mask = torch.ones_like(input_features, dtype=torch.long, device=device)
-        
-        # Generate transcription with attention mask
+        # Generate transcription
         with torch.no_grad():
             predicted_ids = model.generate(
                 input_features,
-                attention_mask=attention_mask
+                max_length=448,
+                num_beams=2,
+                temperature=0.2
             )
         
         transcription = processor.batch_decode(
@@ -117,8 +118,8 @@ def main():
     try:
         # Load environment variables
         load_dotenv()
-        chunk_duration = float(os.getenv('CHUNK_DURATION_S', '3'))
-        silence_threshold = float(os.getenv('SILENCE_THRESHOLD_RMS', '0.005'))
+        chunk_duration = float(os.getenv('CHUNK_DURATION_S', '5'))  # Increased default chunk size
+        silence_threshold = float(os.getenv('SILENCE_THRESHOLD_RMS', '0.002'))
         
         # Initialize model and audio device
         processor, model, device, _ = load_model()
@@ -131,26 +132,48 @@ def main():
         logger.info(f"Recording from: {loopback_device.name}")
         logger.info("Started listening... (Press Ctrl+C to stop)")
         
+        # Calculate sizes in samples
+        overlap_samples = int(OVERLAP_DURATION * SAMPLE_RATE)
+        chunk_samples = int(chunk_duration * SAMPLE_RATE)
+        buffer_samples = int(AUDIO_BUFFER_DURATION * SAMPLE_RATE)
+        
+        # Initialize audio buffer with enough capacity for minimum length requirement
+        audio_buffer = deque(maxlen=buffer_samples)
+        previous_chunk = np.zeros(overlap_samples, dtype=np.float32)
+        
         # Start recording loop
-        with loopback_device.recorder(samplerate=16000) as mic, \
+        with loopback_device.recorder(samplerate=SAMPLE_RATE) as mic, \
              open(output_file, 'a', encoding='utf-8') as f:
             while True:
                 # Record audio chunk
-                audio_data = mic.record(int(16000 * chunk_duration))
+                audio_data = mic.record(chunk_samples)
                 
                 # Convert to mono if stereo
                 if len(audio_data.shape) > 1:
                     audio_data = audio_data.mean(axis=1)
                 
-                # Check if audio is not silence
-                if np.sqrt(np.mean(audio_data**2)) > silence_threshold:
-                    transcription = process_audio(audio_data, processor, model, device)
+                # Add overlap from previous chunk
+                audio_with_overlap = np.concatenate([previous_chunk, audio_data])
+                
+                # Update previous chunk for next iteration
+                previous_chunk = audio_data[-overlap_samples:]
+                
+                # Extend audio buffer
+                audio_buffer.extend(audio_data)
+                
+                # Check if audio is not silence and we have enough data
+                if len(audio_buffer) >= MIN_AUDIO_LENGTH * SAMPLE_RATE and \
+                   np.sqrt(np.mean(audio_data**2)) > silence_threshold:
+                    # Process audio with context from buffer
+                    context_audio = np.array(list(audio_buffer))
+                    transcription = process_audio(context_audio, processor, model, device)
+                    
                     if transcription:
                         timestamp = datetime.now().strftime("%H:%M:%S")
                         output_line = f"[{timestamp}] {transcription}\n"
                         print(f"🎤 {transcription}")
                         f.write(output_line)
-                        f.flush()  # Ensure immediate write to file
+                        f.flush()
     
     except KeyboardInterrupt:
         logger.info("\nStopping transcription...")
