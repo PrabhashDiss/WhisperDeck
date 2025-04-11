@@ -48,7 +48,7 @@ SILENCE_THRESHOLD_RMS=0.005
 
 Run the transcription script:
 ```bash
-python transcribe_system_audio.py
+python main.py
 ```
 
 ## Configuration
