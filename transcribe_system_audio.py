@@ -64,16 +64,36 @@ def process_audio(audio_data, processor, model, device):
         if audio_data.dtype != np.float32:
             audio_data = audio_data.astype(np.float32)
         
-        # Prepare audio features
-        input_features = processor(
+        # Calculate target length (30 seconds at 16kHz = 480000 samples)
+        target_length = 480000
+        current_length = len(audio_data)
+        
+        if current_length < target_length:
+            # Pad with zeros if audio is shorter than 30 seconds
+            padding = np.zeros(target_length - current_length, dtype=np.float32)
+            audio_data = np.concatenate([audio_data, padding])
+        elif current_length > target_length:
+            # Trim if audio is longer than 30 seconds
+            audio_data = audio_data[:target_length]
+        
+        # Prepare audio features with attention mask
+        inputs = processor(
             audio_data, 
             sampling_rate=16000, 
-            return_tensors="pt"
-        ).input_features.to(device)
+            return_tensors="pt",
+            padding=True
+        )
+        input_features = inputs.input_features.to(device)
         
-        # Generate transcription
+        # Create attention mask (all 1s since we're processing a single chunk)
+        attention_mask = torch.ones_like(input_features, dtype=torch.long, device=device)
+        
+        # Generate transcription with attention mask
         with torch.no_grad():
-            predicted_ids = model.generate(input_features)
+            predicted_ids = model.generate(
+                input_features,
+                attention_mask=attention_mask
+            )
         
         transcription = processor.batch_decode(
             predicted_ids, 
