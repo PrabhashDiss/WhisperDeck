@@ -3,11 +3,15 @@ import os
 import numpy as np
 import soundcard as sc
 import torch
+import warnings
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from dotenv import load_dotenv
 
 from utils.device import get_optimal_device
 from utils.logger_config import setup_logger
+
+# Filter out soundcard data discontinuity warnings
+warnings.filterwarnings("ignore", message="data discontinuity in recording")
 
 # Initialize logging
 logger = setup_logger()
