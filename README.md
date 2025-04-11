@@ -59,18 +59,6 @@ Environment variables in `.env`:
 - `CHUNK_DURATION_S`: Duration of audio chunks to process
 - `SILENCE_THRESHOLD_RMS`: Threshold for silence detection
 
-## Tips for Improving Transcription
-
-- **Ensure audio is playing through your system**: Make sure the audio you want to transcribe is being played on your computer.
-- **Configure Voicemeeter**: If using Voicemeeter, route the audio you want to transcribe to Output B2.
-- **Adjust silence threshold**: Modify the `SILENCE_THRESHOLD_RMS` value in the `.env` file if the script is not picking up audio or is too sensitive.
-
-## Stopping the Script
-
-- The script will transcribe any audio it detects above the silence threshold.
-- Transcriptions will appear with a 🎤 emoji prefix.
-- Press `Ctrl+C` to stop the transcription.
-
 ## Troubleshooting
 
 1. No audio device found:
