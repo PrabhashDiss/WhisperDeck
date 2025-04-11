@@ -10,7 +10,7 @@ WhisperDeck captures system audio (loopback) and transcribes it in real-time usi
 
 - Python 3.8 or higher
 - Virtual audio cable software (OS-specific):
-  - Windows: VB-CABLE
+  - Windows: VB-CABLE, Voicemeeter
   - macOS: BlackHole
   - Linux: PulseAudio
 
